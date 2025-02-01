@@ -1,69 +1,70 @@
 import json
-from datetime import datetime
-from reportlab.lib.pagesizes import A4
+import os
+from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-def load_order(file_path):
-    with open(file_path, 'r', encoding='utf-8') as file:
-        return json.load(file)
+def read_json(file_path):
+    try:
+        with open(file_path) as f:
+            return json.load(f)
+    except Exception as e:
+        return None
 
-def calculate_invoice(order_data):
-    invoice = {
-        "invoice_id": f"INV-{order_data['order_id']}",
-        "date": datetime.now().strftime("%Y-%m-%d"),
-        "customer": order_data["customer"],
-        "items": [],
-        "subtotal": 0.0,
-        "tax": 0.0,
-        "total": 0.0
-    }
-    
-    tax_rate = 0.21  # 21% btw
-    subtotal = sum(item["price"] * item["quantity"] for item in order_data["items"])
-    tax = round(subtotal * tax_rate, 2)
-    total = round(subtotal + tax, 2)
-    
-    invoice["items"] = order_data["items"]
-    invoice["subtotal"] = round(subtotal, 2)
-    invoice["tax"] = tax
-    invoice["total"] = total
-    
-    return invoice
+def calculate_total(producten):
+    total_excl_btw = sum(p['aantal'] * p['prijs_per_stuk_excl_btw'] for p in producten)
+    total_btw = sum(p['aantal'] * p['prijs_per_stuk_excl_btw'] * (p['btw_percentage'] / 100) for p in producten)
+    total_incl_btw = total_excl_btw + total_btw
+    return total_incl_btw
 
-def save_invoice(invoice_data, output_file):
-    with open(output_file, 'w', encoding='utf-8') as file:
-        json.dump(invoice_data, file, indent=4, ensure_ascii=False)
+def create_invoice_pdf(order_data, pdf_path):
+    c = canvas.Canvas(pdf_path, pagesize=letter)
+    
+    order = order_data['order']
+    klant = order['klant']
+    
+    # Basisinformatie
+    c.drawString(100, 750, f"Factuurnummer: {order['ordernummer']}")
+    c.drawString(100, 735, f"Orderdatum: {order['orderdatum']}")
+    c.drawString(100, 720, f"Betalingstermijn: {order['betaaltermijn']}")
+    c.drawString(100, 705, f"Klant: {klant['naam']}")
+    c.drawString(100, 690, f"Adres: {klant['adres']}, {klant['postcode']} {klant['stad']}")
+    c.drawString(100, 675, f"KVK-nummer: {klant['KVK-nummer']}")
 
-def generate_pdf(invoice_data, pdf_file):
-    c = canvas.Canvas(pdf_file, pagesize=A4)
-    c.drawString(100, 800, f"Factuur ID: {invoice_data['invoice_id']}")
-    c.drawString(100, 780, f"Datum: {invoice_data['date']}")
-    c.drawString(100, 760, f"Klant: {invoice_data['customer']}")
+    # Producten
+    y_position = 650
+    for product in order['producten']:
+        c.drawString(100, y_position, f"{product['productnaam']} - {product['aantal']} @ €{product['prijs_per_stuk_excl_btw']:.2f} (Excl. BTW)")
+        y_position -= 15
     
-    y_position = 720
-    c.drawString(100, y_position, "Items:")
-    y_position -= 20
-    for item in invoice_data["items"]:
-        c.drawString(100, y_position, f"{item['name']} - Aantal: {item['quantity']} - Prijs: €{item['price']}")
-        y_position -= 20
-    
-    c.drawString(100, y_position - 20, f"Subtotaal: €{invoice_data['subtotal']}")
-    c.drawString(100, y_position - 40, f"BTW (21%): €{invoice_data['tax']}")
-    c.drawString(100, y_position - 60, f"Totaal: €{invoice_data['total']}")
-    
+    # Totaal inclusief BTW
+    total_incl_btw = calculate_total(order['producten'])
+    c.drawString(100, y_position - 30, f"Totaal (Incl. BTW): €{total_incl_btw:.2f}")
     c.save()
 
-def main():
-    order_file = "order.json"  # Pas dit aan naar de juiste bestandsnaam
-    invoice_file = "invoice.json"
-    pdf_file = "invoice.pdf"
-    
-    order_data = load_order(order_file)
-    invoice_data = calculate_invoice(order_data)
-    save_invoice(invoice_data, invoice_file)
-    generate_pdf(invoice_data, pdf_file)
-    
-    print(f"Factuur opgeslagen in {invoice_file} en PDF gegenereerd: {pdf_file}")
+def process_orders(orders_path, output_path, error_path):
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+    if not os.path.exists(error_path):
+        os.makedirs(error_path)
 
-if __name__ == "__main__":
-    main()
+    for filename in os.listdir(orders_path):
+        if filename.endswith('.json'):
+            file_path = os.path.join(orders_path, filename)
+            order_data = read_json(file_path)
+
+            if order_data is None:
+                error_file_path = os.path.join(error_path, filename)
+                os.rename(file_path, error_file_path)
+                continue
+
+            pdf_path = os.path.join(output_path, filename.replace('.json', '.pdf'))
+            create_invoice_pdf(order_data, pdf_path)
+            print(f"Invoice PDF created for {filename}")
+
+# Paden (pas deze aan naar je eigen locaties)
+orders_path = '\Users\yazan\Documents\GitHub\project2\JSON_ORDER '
+output_path = '\Users\yazan\Documents\GitHub\project2\PDF_INVOICE'
+error_path = '\Users\yazan\Documents\GitHub\project2\JSON_ORDER_ERROR'
+
+# Verwerk de orders
+process_orders(orders_path, output_path, error_path)
